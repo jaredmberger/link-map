@@ -1,0 +1,12 @@
+{
+  "name": "ocean-liner-curator-link-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive internal-link graph for OceanLiners.net",
+  "scripts": {
+    "build": "node scripts/build.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
