@@ -6,22 +6,31 @@ Standalone internal-link visualization and audit tool for `https://oceanliners.n
 
 Create a Cloudflare Pages project connected to `jaredmberger/link-map`.
 
-Recommended settings:
+Use these settings:
 
 - Production branch: `main`
 - Framework preset: None
-- Build command: leave blank
-- Build output directory: `/`
+- Build command: `npm run build`
+- Build output directory: `public`
+- Root directory: repository root / blank
 
-The repository root contains `index.html`, and the live crawler is implemented as a Pages Function at:
+The build copies `index.html` into the deployable `public/` directory. The Pages Function remains at the repository root:
 
-`/functions/api/link-map.js`
+`functions/api/link-map.js`
 
-which is exposed as:
+Cloudflare Pages exposes it automatically as:
 
 `/api/link-map`
 
-The app calls that endpoint automatically and renders the current Ocean Liner Curator internal-link graph.
+The generated `public/_routes.json` explicitly routes `/api/*` through Pages Functions.
+
+The repository also includes `wrangler.toml` with `pages_build_output_dir = "./public"` so the expected Pages output is documented in code as well as in the dashboard settings.
+
+### If `/api/link-map` returns 404
+
+A 404 means the deployment contains the static page but not the Pages Function. Confirm that the Cloudflare project is a **Pages** project connected to this Git repository, not a static/direct upload or a standalone Worker deployment. Then confirm the build command and output directory above and redeploy the latest `main` commit.
+
+Visiting `/api/link-map` directly should return JSON. Once that endpoint works, the Link Map UI will populate automatically.
 
 ## Optional KV cache
 
