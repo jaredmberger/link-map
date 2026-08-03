@@ -1,8 +1,15 @@
 const SITE='https://oceanliners.net';
 const MAX_PAGES=2000;
 const CACHE_TTL_SECONDS=60*60*6;
-const CACHE_KEY='link-map-v3';
-const SEED_PATHS=['/','/ships/ships','/site-map','/explore'];
+const CACHE_KEY='link-map-v4';
+const START_URLS=[
+  `${SITE}/`,
+  `${SITE}/ships/ships`,
+  `${SITE}/explore`,
+  `${SITE}/collections`,
+  `${SITE}/reference-objects`
+];
+const USER_AGENT='OceanLinerCurator-LinkMap/4.0 (+https://oceanliners.net/)';
 
 export async function onRequestGet(context){
   try{
@@ -13,191 +20,112 @@ export async function onRequestGet(context){
       const cached=await cache.get(CACHE_KEY,'json');
       if(cached?.generatedAt&&Array.isArray(cached.pages)&&Array.isArray(cached.edges))return json(cached,200);
     }
-    const result=await crawl();
+    const result=await crawlSite();
     if(cache)await cache.put(CACHE_KEY,JSON.stringify(result),{expirationTtl:CACHE_TTL_SECONDS});
     return json(result,200);
-  }catch(error){return json({error:error instanceof Error?error.message:String(error)},500)}
+  }catch(error){
+    return json({error:error instanceof Error?error.message:String(error)},500);
+  }
 }
 
-async function crawl(){
-  const discovered=new Set(SEED_PATHS);
-  const sitemap=await sitemapPaths();
-  sitemap.forEach(p=>discovered.add(p));
-
-  // Archive/index pages are valuable seeds, but some site indexes are rendered by JS.
-  // Pull every href we can from the authored HTML, then also inspect JS files that
-  // commonly contain canonical ship/page lists (random-ship.js, related-liners.js, etc.).
-  for(const p of await archivePaths('/ships/ships'))discovered.add(p);
-  for(const p of await archivePaths('/site-map'))discovered.add(p);
-  for(const p of await archivePaths('/explore'))discovered.add(p);
-  for(const p of await scriptSeedPaths())discovered.add(p);
-
-  const queue=[...discovered];
+async function crawlSite(){
+  const queue=[...START_URLS];
+  const seen=new Set();
   const pages=[];
-  const pageSeen=new Set();
   const edges=[];
   const edgeSeen=new Set();
-  let cursor=0;
-  const workers=Array.from({length:10},()=>worker());
-  await Promise.all(workers);
 
-  async function worker(){
-    while(true){
-      const i=cursor++;
-      if(i>=queue.length||pageSeen.size>=MAX_PAGES)return;
-      const path=queue[i];
-      const url=new URL(path,SITE).href;
-      let res;
-      try{res=await fetch(url,{headers:{'user-agent':'OceanLinerCurator-LinkMap/3.0','accept':'text/html,application/xhtml+xml'}})}catch{continue}
-      if(!res.ok||!(res.headers.get('content-type')||'').includes('text/html'))continue;
-      const html=await res.text();
-      const canonical=normalize(extractCanonical(html)||url);
-      if(!canonical||pageSeen.has(canonical))continue;
-      pageSeen.add(canonical);
-      const links=extractLinks(html,url);
-      pages.push({url:canonical,title:extractTitle(html)||friendlyTitle(canonical)});
-      for(const raw of links){
-        const target=normalize(raw);if(!target)continue;
-        const key=`${canonical}>${target}`;
-        if(!edgeSeen.has(key)){edgeSeen.add(key);edges.push({source:canonical,target})}
-        const p=new URL(target).pathname;
-        if(!discovered.has(p)&&discovered.size<MAX_PAGES){discovered.add(p);queue.push(p)}
-      }
+  while(queue.length&&seen.size<MAX_PAGES){
+    const requested=queue.shift();
+    const normalizedRequested=normalizeInternalPageUrl(new URL(requested));
+    if(!normalizedRequested||seen.has(normalizedRequested))continue;
+    seen.add(normalizedRequested);
+
+    let response;
+    try{
+      response=await fetchWithTimeout(normalizedRequested,{
+        headers:{'user-agent':USER_AGENT,accept:'text/html,application/xhtml+xml'},
+        redirect:'follow'
+      },20000);
+    }catch{
+      continue;
+    }
+
+    const contentType=response.headers.get('content-type')||'';
+    if(!response.ok||!contentType.toLowerCase().includes('text/html'))continue;
+
+    const html=await response.text();
+    const finalUrl=normalizeInternalPageUrl(new URL(response.url||normalizedRequested))||normalizedRequested;
+    const title=extractTitle(html)||pathToTitle(new URL(finalUrl).pathname);
+    const anchors=extractAnchors(html,finalUrl);
+    const internal=new Set();
+
+    for(const anchor of anchors){
+      let parsed;
+      try{parsed=new URL(anchor.href)}catch{continue}
+      const target=normalizeInternalPageUrl(parsed);
+      if(!target||target===finalUrl)continue;
+      internal.add(target);
+      if(!seen.has(target)&&!queue.includes(target)&&seen.size+queue.length<MAX_PAGES)queue.push(target);
+    }
+
+    pages.push({url:finalUrl,title});
+    for(const target of internal){
+      const key=`${finalUrl}>${target}`;
+      if(edgeSeen.has(key))continue;
+      edgeSeen.add(key);
+      edges.push({source:finalUrl,target});
     }
   }
 
-  const known=new Set(pages.map(p=>p.url));
-  const internalEdges=edges.filter(e=>known.has(e.source)&&known.has(e.target));
+  const dedupPages=new Map();
+  for(const page of pages)if(!dedupPages.has(page.url))dedupPages.set(page.url,page);
+  const finalPages=[...dedupPages.values()].sort((a,b)=>a.url.localeCompare(b.url));
+  const known=new Set(finalPages.map(p=>p.url));
+  const finalEdges=edges.filter(e=>known.has(e.source)&&known.has(e.target)).sort((a,b)=>a.source.localeCompare(b.source)||a.target.localeCompare(b.target));
+
   return {
     site:SITE,
     generatedAt:new Date().toISOString(),
-    pages:pages.sort((a,b)=>a.url.localeCompare(b.url)),
-    edges:internalEdges.sort((a,b)=>a.source.localeCompare(b.source)||a.target.localeCompare(b.target)),
-    source:'live-crawl',
-    coverage:{
-      discoveredPaths:discovered.size,
-      sitemapSeeds:sitemap.length,
-      crawledPages:pages.length,
-      maxPages:MAX_PAGES
-    }
+    source:'site-health-style-recursive-crawl',
+    pages:finalPages,
+    edges:finalEdges,
+    coverage:{queuedStarts:START_URLS.length,seenPages:seen.size,crawledPages:finalPages.length,maxPages:MAX_PAGES}
   };
 }
 
-async function archivePaths(path){
-  const out=new Set();
-  try{
-    const res=await fetch(new URL(path,SITE),{headers:{'user-agent':'OceanLinerCurator-LinkMap/3.0','accept':'text/html'}});
-    if(!res.ok)return [];
-    const html=await res.text();
-    for(const raw of extractLinks(html,new URL(path,SITE).href)){
-      const n=normalize(raw);if(n)out.add(new URL(n).pathname);
-    }
-  }catch{}
-  return [...out];
+function extractAnchors(html,baseUrl){
+  const results=[];
+  const regex=/<a\b[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+  while((match=regex.exec(html))){
+    const raw=decodeEntities(match[1]??match[2]??match[3]??'').trim();
+    if(!raw||raw.startsWith('#')||/^(mailto|tel|javascript|data):/i.test(raw))continue;
+    try{results.push({href:new URL(raw,baseUrl).href,text:stripTags(match[4])})}catch{}
+  }
+  return results;
 }
 
-async function scriptSeedPaths(){
-  const out=new Set();
-  const scripts=new Set([
-    '/random-ship.js','/related-liners.js','/related-ships.js',
-    '/js/random-ship.js','/js/related-liners.js','/js/related-ships.js',
-    '/assets/random-ship.js','/assets/related-liners.js','/assets/related-ships.js',
-    '/scripts/random-ship.js','/scripts/related-liners.js','/scripts/related-ships.js'
-  ]);
-
-  // Discover additional script src values from the main index/archive pages.
-  for(const seed of SEED_PATHS){
-    try{
-      const res=await fetch(new URL(seed,SITE),{headers:{'user-agent':'OceanLinerCurator-LinkMap/3.0','accept':'text/html'}});
-      if(!res.ok)continue;
-      const html=await res.text();
-      for(const src of extractScriptSources(html,new URL(seed,SITE).href)){
-        const u=new URL(src,SITE);
-        if(['oceanliners.net','www.oceanliners.net'].includes(u.hostname)&&/\.js(?:$|\?)/i.test(u.pathname))scripts.add(u.pathname);
-      }
-    }catch{}
-  }
-
-  for(const path of scripts){
-    try{
-      const res=await fetch(new URL(path,SITE),{headers:{'user-agent':'OceanLinerCurator-LinkMap/3.0','accept':'text/javascript,application/javascript,text/plain'}});
-      if(!res.ok)continue;
-      const text=await res.text();
-      for(const candidate of extractPathLikeStrings(text)){
-        const n=normalize(candidate);if(n)out.add(new URL(n).pathname);
-      }
-    }catch{}
-  }
-  return [...out];
+function normalizeInternalPageUrl(url){
+  const parsed=new URL(url.href);
+  if(parsed.origin!==SITE)return null;
+  if(!/^https?:$/.test(parsed.protocol))return null;
+  parsed.hash='';
+  parsed.search='';
+  parsed.pathname=parsed.pathname.replace(/\/index\.html?$/i,'/');
+  if(/\.html?$/i.test(parsed.pathname))parsed.pathname=parsed.pathname.replace(/\.html?$/i,'');
+  if(isAssetPath(parsed.pathname)||isExcludedPath(parsed.pathname))return null;
+  return parsed.href.replace(/\/$/,parsed.pathname==='/'?'/':'');
 }
 
-async function sitemapPaths(){
-  const out=new Set();
-  const seenXml=new Set();
-  const queue=['/sitemap.xml','/sitemap_index.xml'];
-  while(queue.length){
-    const candidate=queue.shift();
-    const abs=new URL(candidate,SITE).href;
-    if(seenXml.has(abs))continue;
-    seenXml.add(abs);
-    try{
-      const res=await fetch(abs,{headers:{'user-agent':'OceanLinerCurator-LinkMap/3.0','accept':'application/xml,text/xml,text/plain'}});
-      if(!res.ok)continue;
-      const xml=await res.text();
-      for(const m of xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)){
-        const loc=decode(m[1].trim());
-        if(/\.xml(?:$|\?)/i.test(loc)){
-          try{const u=new URL(loc,SITE);if(['oceanliners.net','www.oceanliners.net'].includes(u.hostname))queue.push(u.href)}catch{}
-        }else{
-          const n=normalize(loc);if(n)out.add(new URL(n).pathname);
-        }
-      }
-    }catch{}
-  }
-  return [...out].slice(0,MAX_PAGES);
+function isAssetPath(path){
+  return /\.(?:avif|bmp|css|csv|docx?|eot|gif|ico|jpe?g|js|json|map|mp3|mp4|mov|pdf|png|pptx?|svg|tiff?|txt|webm|webp|woff2?|xlsx?|xml|zip)$/i.test(path);
 }
-
-function extractLinks(html,base){
-  const out=new Set();
-  const re=/<a\b[^>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
-  for(const m of html.matchAll(re)){
-    const raw=(m[1]??m[2]??m[3]??'').trim();
-    if(!raw||raw.startsWith('#')||/^(mailto:|tel:|javascript:|data:)/i.test(raw))continue;
-    try{out.add(new URL(decode(raw),base).href)}catch{}
-  }
-  return [...out];
-}
-
-function extractScriptSources(html,base){
-  const out=new Set();
-  const re=/<script\b[^>]*?src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
-  for(const m of html.matchAll(re)){
-    const raw=(m[1]??m[2]??m[3]??'').trim();
-    if(!raw)continue;
-    try{out.add(new URL(decode(raw),base).href)}catch{}
-  }
-  return [...out];
-}
-
-function extractPathLikeStrings(text){
-  const out=new Set();
-  const patterns=[
-    /["'`]((?:https?:\/\/(?:www\.)?oceanliners\.net)?\/[A-Za-z0-9_~.!$&'()*+,;=:@%\/-]+)["'`]/g,
-    /["'`]((?:\.\.\/|\.\/)+[A-Za-z0-9_~.!$&'()*+,;=:@%\/-]+)["'`]/g
-  ];
-  for(const re of patterns){
-    for(const m of text.matchAll(re)){
-      const raw=m[1];
-      if(!raw||/\.(?:js|css|json|xml|jpg|jpeg|png|gif|webp|svg|pdf|zip|ico|txt|mp4|webm|mp3|woff2?|ttf)$/i.test(raw))continue;
-      try{out.add(new URL(raw,SITE).href)}catch{}
-    }
-  }
-  return [...out];
-}
-
-function extractTitle(html){const m=html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);return m?decode(m[1]).replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim():''}
-function extractCanonical(html){for(const tag of html.match(/<link\b[^>]*>/gi)||[]){if(!/\bcanonical\b/i.test(tag))continue;const m=tag.match(/href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);if(m)return decode((m[1]??m[2]??m[3]??'').trim())}return''}
-function normalize(value){try{const u=new URL(value,SITE);if(!['oceanliners.net','www.oceanliners.net'].includes(u.hostname))return null;u.protocol='https:';u.hostname='oceanliners.net';u.hash='';u.search='';let p=u.pathname.replace(/\/index\.html?$/i,'/').replace(/\/{2,}/g,'/');if(p.length>1)p=p.replace(/\/$/,'');if(/\.(?:jpg|jpeg|png|gif|webp|svg|pdf|zip|xml|json|js|css|ico|txt|mp4|webm|mp3|woff2?|ttf)$/i.test(p))return null;u.pathname=p||'/';return u.href}catch{return null}}
-function friendlyTitle(url){const p=new URL(url).pathname.split('/').filter(Boolean).pop()||'Ocean Liner Curator';return p.replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}
-function decode(s){return s.replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>')}
-function json(value,status){return new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}})}
+function isExcludedPath(path){return /^\/(?:cdn-cgi|wp-admin|wp-login|api|feed)(?:\/|$)/i.test(path)}
+function extractTitle(html){const m=html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);return m?cleanText(stripTags(m[1])):''}
+function pathToTitle(path){const part=path.split('/').filter(Boolean).pop()||'Homepage';return part.replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}
+function stripTags(value){return decodeEntities(String(value||'').replace(/<script\b[\s\S]*?<\/script>/gi,' ').replace(/<style\b[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' '))}
+function cleanText(value){return String(value||'').replace(/\s+/g,' ').trim()}
+function decodeEntities(value){return String(value||'').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&nbsp;/gi,' ').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCharCode(parseInt(n,16)))}
+function fetchWithTimeout(url,options,timeoutMs){const controller=new AbortController();const timer=setTimeout(()=>controller.abort('timeout'),timeoutMs);return fetch(url,{...options,signal:controller.signal}).finally(()=>clearTimeout(timer))}
+function json(value,status=200){return new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}})}
