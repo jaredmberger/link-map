@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a1110">
+  <title>Text Tree — Ocean Liner Curator Link Map</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0a1110;--panel:#111a18;--panel2:#17221f;--line:#2b3a35;--text:#f3efe5;--muted:#b7b6ad;--brass:#bfa46a;--good:#8db68f;--purple:#8e7ac8}
+    *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.app{min-height:100vh}.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid var(--line);background:rgba(10,17,16,.96)}.brand{display:flex;gap:11px;align-items:center}.flag{width:34px;height:22px;background:#8f1f24;clip-path:polygon(0 0,100% 0,86% 50%,100% 100%,0 100%)}.brand strong{font-family:Georgia,serif;font-size:1.1rem}.brand span{display:block;color:var(--muted);font-size:.78rem}.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:10px;padding:9px 12px;text-decoration:none;cursor:pointer}.btn.primary{background:var(--brass);border-color:var(--brass);color:#17130c;font-weight:700}.controls{position:sticky;top:71px;z-index:15;display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:8px;padding:11px 18px;border-bottom:1px solid var(--line);background:#0d1513}.controls input{width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px 11px}.main{max-width:1200px;margin:0 auto;padding:18px}.summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 10px;color:var(--muted);font-size:.8rem}.tree{font-size:.94rem;line-height:1.5}.tree ul{list-style:none;margin:0;padding-left:24px;border-left:1px solid #273630}.tree>ul{padding-left:0;border-left:0}.tree li{position:relative;margin:3px 0}.tree li::before{content:"";position:absolute;left:-24px;top:15px;width:18px;border-top:1px solid #273630}.tree>ul>li::before{display:none}.tree details{border-radius:8px}.tree summary{display:flex;align-items:center;gap:7px;cursor:pointer;padding:5px 7px;border-radius:7px}.tree summary:hover{background:var(--panel)}.tree summary::-webkit-details-marker{display:none}.twisty{width:16px;color:var(--brass);font-size:.8rem;flex:0 0 16px}.folder{color:var(--brass)}.page{color:var(--text);text-decoration:none}.page:hover{text-decoration:underline}.meta{margin-left:auto;color:var(--muted);font-size:.72rem;white-space:nowrap}.type{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--brass)}.type.article{background:var(--purple)}.type.core{background:var(--good)}.type.hub{background:#d7c391}.leaf{display:flex;align-items:center;gap:7px;padding:5px 7px}.indent-note{color:var(--muted);font-size:.82rem;margin:4px 0 12px}.status{color:var(--muted);padding:28px 4px}.hidden{display:none!important}.match{background:rgba(191,164,106,.12);outline:1px solid rgba(191,164,106,.35)}
+    @media(max-width:700px){.topbar{align-items:flex-start}.controls{top:89px;grid-template-columns:1fr 1fr}.controls input{grid-column:1/-1}.main{padding:12px}.tree ul{padding-left:18px}.tree li::before{left:-18px;width:13px}.meta{display:none}}
+  </style>
+  <script src="/client-crawler.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar"><div class="brand"><div class="flag"></div><div><strong>Text Tree</strong><span>Ocean Liner Curator branch browser</span></div></div><div class="actions"><a class="btn" href="/">Visual map</a><button class="btn primary" id="reloadBtn">Refresh crawl</button></div></header>
+  <section class="controls"><input id="search" type="search" placeholder="Find a page or path…"><button class="btn" id="expandBtn">Expand all</button><button class="btn" id="collapseBtn">Collapse all</button></section>
+  <main class="main">
+    <div class="summary" id="summary"></div>
+    <p class="indent-note">This is a folder-style reading of the site. Each page appears once under the first parent that discovered it from the homepage; the badge at right shows its total incoming/outgoing links across the full site.</p>
+    <div id="tree" class="tree"><div class="status">Building site tree…</div></div>
+  </main>
+</div>
+<script>
+const SITE='https://oceanliners.net';
+const $=s=>document.querySelector(s);
+let data=null;
+function esc(v=''){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function typeFor(url){const p=new URL(url).pathname.toLowerCase();if(p.startsWith('/ships/')&&p!='/ships/ships')return'ship';if(p.includes('hub')||p==='/ships/ships'||p==='/explore'||p==='/site-map')return'hub';if(p.includes('/quick-answer')||p.includes('/articles/')||p.includes('/history/')||(/why-|what-|how-|did-|could-|ocean-liner/.test(p.split('/').pop()||'')))return'article';if(['/','/about','/sources','/provenance','/attribution','/contact','/project-scope'].includes(p.replace(/\/$/,'')||'/'))return'core';return'other'}
+function annotate(){const incoming=new Map(),outgoing=new Map();for(const p of data.pages){incoming.set(p.url,[]);outgoing.set(p.url,[])}for(const e of data.edges){if(outgoing.has(e.source))outgoing.get(e.source).push(e.target);if(incoming.has(e.target))incoming.get(e.target).push(e.source)}for(const p of data.pages){p.incoming=incoming.get(p.url)||[];p.outgoing=outgoing.get(p.url)||[];p.total=p.incoming.length+p.outgoing.length;p.type=typeFor(p.url)}}
+function buildTree(){annotate();const map=new Map(data.pages.map(p=>[p.url,p]));const root=map.get(SITE+'/')||data.pages[0];const children=new Map(data.pages.map(p=>[p.url,[]]));const seen=new Set([root.url]);const queue=[root.url];while(queue.length){const current=queue.shift();const p=map.get(current);if(!p)continue;const next=[...p.outgoing].filter(u=>map.has(u)&&!seen.has(u)).sort((a,b)=>(map.get(b)?.total||0)-(map.get(a)?.total||0));for(const u of next){seen.add(u);children.get(current).push(u);queue.push(u)}}for(const p of data.pages.filter(p=>!seen.has(p.url)).sort((a,b)=>b.total-a.total)){children.get(root.url).push(p.url);seen.add(p.url)}
+  function renderNode(url,depth=0){const p=map.get(url);if(!p)return'';const kids=children.get(url)||[];const label=esc(p.title||new URL(p.url).pathname);const path=esc(new URL(p.url).pathname);const meta=`${p.incoming.length} in · ${p.outgoing.length} out`;const common=`data-label="${esc((p.title+' '+path).toLowerCase())}"`;
+    if(kids.length){return `<li ${common}><details ${depth<2?'open':''}><summary><span class="twisty">▸</span><span class="type ${p.type}"></span><span class="folder">▣</span><a class="page" href="${esc(p.url)}" target="_blank" rel="noopener">${label}</a><span class="meta">${meta} · ${kids.length} branches</span></summary><ul>${kids.map(k=>renderNode(k,depth+1)).join('')}</ul></details></li>`}
+    return `<li ${common}><div class="leaf"><span class="twisty"></span><span class="type ${p.type}"></span><span>•</span><a class="page" href="${esc(p.url)}" target="_blank" rel="noopener">${label}</a><span class="meta">${meta}</span></div></li>`
+  }
+  $('#tree').innerHTML=`<ul>${renderNode(root.url)}</ul>`;
+  $('#summary').innerHTML=`<span class="chip">${data.pages.length} pages</span><span class="chip">${data.edges.length} internal links</span><span class="chip">Root: ${esc(root.title||'Homepage')}</span>`;
+  $('#tree').querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{const t=d.querySelector(':scope > summary .twisty');if(t)t.textContent=d.open?'▾':'▸'}));
+}
+function filterTree(){const q=$('#search').value.trim().toLowerCase();const items=[...$('#tree').querySelectorAll('li[data-label]')];if(!q){items.forEach(li=>{li.classList.remove('hidden','match')});return}for(const li of items){const match=li.dataset.label.includes(q);li.classList.toggle('match',match);li.classList.toggle('hidden',!match)}for(const li of items.filter(li=>li.classList.contains('match'))){let p=li.parentElement;while(p&&p!==$('#tree')){if(p.tagName==='LI')p.classList.remove('hidden');if(p.tagName==='DETAILS')p.open=true;p=p.parentElement}}
+}
+async function load(){try{$('#tree').innerHTML='<div class="status">Crawling OceanLiners.net…</div>';data=await window.buildLinkMapClient({onProgress:p=>{$('#tree').innerHTML=`<div class="status">Crawling ${p.seen} pages · ${p.queued} queued · ${esc(new URL(p.url).pathname)}</div>`}});buildTree()}catch(e){$('#tree').innerHTML=`<div class="status">Could not build tree: ${esc(e.message)}</div>`}}
+$('#expandBtn').addEventListener('click',()=>$('#tree').querySelectorAll('details').forEach(d=>d.open=true));
+$('#collapseBtn').addEventListener('click',()=>{$('#tree').querySelectorAll('details').forEach((d,i)=>d.open=i===0)});
+$('#search').addEventListener('input',filterTree);
+$('#reloadBtn').addEventListener('click',load);
+load();
+</script>
+</body>
+</html>
