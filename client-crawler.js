@@ -51,3 +51,18 @@ async function buildLinkMapClient({onProgress}={}){
 }
 
 window.buildLinkMapClient=buildLinkMapClient;
+
+function addTreeBrowserLink(){
+  const actions=document.querySelector('.topbar .actions');
+  if(!actions||actions.querySelector('[data-tree-browser-link]'))return;
+  const link=document.createElement('a');
+  link.href='/tree.html';
+  link.className='btn';
+  link.textContent='Text tree';
+  link.setAttribute('data-tree-browser-link','');
+  link.style.textDecoration='none';
+  actions.insertBefore(link,actions.firstChild);
+}
+
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addTreeBrowserLink);
+else addTreeBrowserLink();
