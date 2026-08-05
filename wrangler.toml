@@ -1,3 +1,7 @@
 name = "ocean-liner-link-map"
 compatibility_date = "2026-08-03"
 pages_build_output_dir = "./public"
+
+[[kv_namespaces]]
+binding = "LINK_MAP_CACHE"
+id = "9d3f33cd6d0940cfaf548649af119dfe"
