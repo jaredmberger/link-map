@@ -1,15 +1,15 @@
-const SNAPSHOT_KEY = 'search-intelligence:link-map:v1';
+const SNAPSHOT_KEY = 'search-intelligence:link-map:v2';
 
 export async function onRequestGet(context) {
   try {
     if (!context.env.LINK_MAP_CACHE) {
       return json({ ok: false, pages: [], error: 'LINK_MAP_CACHE is not configured.' }, 503);
     }
-    const snapshot = await context.env.LINK_MAP_CACHE.get(SNAPSHOT_KEY, 'json');
-    if (!snapshot?.pages?.length) {
-      return json({ ok: false, pages: [], error: 'No Link Map snapshot has been published yet. Open Link Map and let a crawl complete.' }, 404);
+    const payload = await context.env.LINK_MAP_CACHE.get(SNAPSHOT_KEY, 'json');
+    if (!payload?.pages?.length) {
+      return json({ ok: false, pages: [], error: 'No Link Map integration snapshot has been published yet. Open Link Map and let a crawl complete.' }, 404);
     }
-    return json(buildIntegrationPayload(snapshot));
+    return json(payload);
   } catch (error) {
     return json({ ok: false, pages: [], error: error instanceof Error ? error.message : String(error) }, 500);
   }
@@ -20,13 +20,22 @@ export async function onRequestPost(context) {
     if (!context.env.LINK_MAP_CACHE) {
       return json({ ok: false, error: 'LINK_MAP_CACHE is not configured.' }, 503);
     }
-    const payload = await context.request.json();
-    const snapshot = normalizeSnapshot(payload);
+    const raw = await context.request.json();
+    const snapshot = normalizeSnapshot(raw);
     if (!snapshot.pages.length) return json({ ok: false, error: 'Snapshot contains no pages.' }, 400);
-    await context.env.LINK_MAP_CACHE.put(SNAPSHOT_KEY, JSON.stringify(snapshot), {
+
+    const payload = buildIntegrationPayload(snapshot);
+    await context.env.LINK_MAP_CACHE.put(SNAPSHOT_KEY, JSON.stringify(payload), {
       expirationTtl: 60 * 60 * 24 * 14,
     });
-    return json({ ok: true, generatedAt: snapshot.generatedAt, pages: snapshot.pages.length, edges: snapshot.edges.length });
+
+    return json({
+      ok: true,
+      generatedAt: payload.generatedAt,
+      pages: payload.pageCount,
+      edges: payload.edgeCount,
+      precomputed: true,
+    });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
   }
@@ -59,15 +68,15 @@ function buildIntegrationPayload(snapshot) {
   }
 
   const pages = snapshot.pages.map(page => {
-    const inbound = [...(incoming.get(page.url) || [])];
-    const outbound = [...(outgoing.get(page.url) || [])];
+    const inbound = incoming.get(page.url) || new Set();
+    const outbound = outgoing.get(page.url) || new Set();
     return {
       path: toPath(page.url),
       title: page.title || '',
-      inboundCount: inbound.length,
-      outboundCount: outbound.length,
-      orphan: inbound.length === 0,
-      suggestions: suggestSources(page.url, snapshot.pages, incoming, outgoing),
+      inboundCount: inbound.size,
+      outboundCount: outbound.size,
+      orphan: inbound.size === 0,
+      suggestions: suggestSourcesFast(page.url, snapshot.pages, incoming, outgoing),
     };
   });
 
@@ -81,23 +90,28 @@ function buildIntegrationPayload(snapshot) {
   };
 }
 
-function suggestSources(target, pages, incoming, outgoing) {
+function suggestSourcesFast(target, pages, incoming, outgoing) {
   const alreadyInbound = incoming.get(target) || new Set();
+  const targetSection = sectionFor(target);
   const targetNeighbors = new Set([...(incoming.get(target) || []), ...(outgoing.get(target) || [])]);
   const candidates = [];
 
   for (const page of pages) {
     const source = page.url;
     if (source === target || alreadyInbound.has(source)) continue;
-    const sourceNeighbors = new Set([...(incoming.get(source) || []), ...(outgoing.get(source) || [])]);
-    let shared = 0;
-    for (const neighbor of targetNeighbors) if (sourceNeighbors.has(neighbor)) shared += 1;
-    const sameSection = sectionFor(source) === sectionFor(target) ? 2 : 0;
-    const score = shared + sameSection;
+    let score = 0;
+    if (sectionFor(source) === targetSection) score += 2;
+    const sourceOut = outgoing.get(source) || new Set();
+    let checked = 0;
+    for (const neighbor of targetNeighbors) {
+      if (sourceOut.has(neighbor)) score += 1;
+      checked += 1;
+      if (checked >= 12) break;
+    }
     if (score > 0) candidates.push({ from: toPath(source), anchor: pageTitleFromUrl(target), score });
   }
 
-  return candidates.sort((a, b) => b.score - a.score || a.from.localeCompare(b.from)).slice(0, 8);
+  return candidates.sort((a, b) => b.score - a.score || a.from.localeCompare(b.from)).slice(0, 6);
 }
 
 function sectionFor(value) {
