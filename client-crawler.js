@@ -40,7 +40,7 @@ async function buildLinkMapClient({onProgress}={}){
   const finalPages=[...dedupPages.values()];
   const known=new Set(finalPages.map(p=>p.url));
   const finalEdges=edges.filter(e=>known.has(e.source)&&known.has(e.target));
-  return {
+  const snapshot={
     site:'https://oceanliners.net',
     generatedAt:new Date().toISOString(),
     source:'site-health-style-browser-queue',
@@ -48,6 +48,23 @@ async function buildLinkMapClient({onProgress}={}){
     edges:finalEdges,
     coverage:{seenPages:seen.size,crawledPages:finalPages.length,maxPages:LINK_MAP_MAX_PAGES}
   };
+
+  publishSearchIntelligenceSnapshot(snapshot).catch(error=>console.warn('Search Intelligence snapshot was not published:',error));
+  return snapshot;
+}
+
+async function publishSearchIntelligenceSnapshot(snapshot){
+  const res=await fetch('/api/search-intelligence',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify(snapshot),
+    cache:'no-store'
+  });
+  if(!res.ok){
+    const data=await res.json().catch(()=>({}));
+    throw new Error(data.error||`Snapshot endpoint returned ${res.status}`);
+  }
+  return res.json();
 }
 
 window.buildLinkMapClient=buildLinkMapClient;
