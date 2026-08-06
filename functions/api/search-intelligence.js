@@ -1,4 +1,5 @@
 const SNAPSHOT_KEY = 'search-intelligence:link-map:v2';
+const GRAPH_SNAPSHOT_KEY = 'link-map:graph:v1';
 
 export async function onRequestGet(context) {
   try {
@@ -25,9 +26,23 @@ export async function onRequestPost(context) {
     if (!snapshot.pages.length) return json({ ok: false, error: 'Snapshot contains no pages.' }, 400);
 
     const payload = buildIntegrationPayload(snapshot);
-    await context.env.LINK_MAP_CACHE.put(SNAPSHOT_KEY, JSON.stringify(payload), {
-      expirationTtl: 60 * 60 * 24 * 14,
-    });
+    await Promise.all([
+      context.env.LINK_MAP_CACHE.put(SNAPSHOT_KEY, JSON.stringify(payload), {
+        expirationTtl: 60 * 60 * 24 * 14,
+      }),
+      context.env.LINK_MAP_CACHE.put(GRAPH_SNAPSHOT_KEY, JSON.stringify({
+        ok: true,
+        source: 'CuratorOS Link Map',
+        generatedAt: snapshot.generatedAt,
+        site: snapshot.site,
+        pageCount: snapshot.pages.length,
+        edgeCount: snapshot.edges.length,
+        pages: snapshot.pages,
+        edges: snapshot.edges,
+      }), {
+        expirationTtl: 60 * 60 * 24 * 14,
+      }),
+    ]);
 
     return json({
       ok: true,
@@ -35,6 +50,7 @@ export async function onRequestPost(context) {
       pages: payload.pageCount,
       edges: payload.edgeCount,
       precomputed: true,
+      graphPublished: true,
     });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
