@@ -81,5 +81,40 @@ function addTreeBrowserLink(){
   actions.insertBefore(link,actions.firstChild);
 }
 
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addTreeBrowserLink);
-else addTreeBrowserLink();
+function normalizeHandoffPage(value){
+  if(!value)return'';
+  try{
+    const url=new URL(value,'https://oceanliners.net');
+    if(!['oceanliners.net','www.oceanliners.net'].includes(url.hostname.toLowerCase()))return'';
+    url.protocol='https:';
+    url.hostname='oceanliners.net';
+    url.hash='';
+    url.search='';
+    let path=url.pathname.replace(/\/index\.html?$/i,'/').replace(/\.html?$/i,'');
+    if(path.length>1)path=path.replace(/\/$/,'');
+    url.pathname=path||'/';
+    return url.href.replace(/\/$/,url.pathname==='/'?'/':'');
+  }catch{return'';}
+}
+
+function applyHandoffFocus(){
+  const params=new URLSearchParams(location.search);
+  const target=normalizeHandoffPage(params.get('page')||params.get('url')||'');
+  if(!target)return;
+  let attempts=0;
+  const timer=setInterval(()=>{
+    attempts+=1;
+    try{
+      if(typeof selectNode==='function'){
+        selectNode(target);
+        const search=document.querySelector('#search');
+        if(search)search.value=new URL(target).pathname;
+        clearInterval(timer);
+      }
+    }catch{}
+    if(attempts>=120)clearInterval(timer);
+  },500);
+}
+
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{addTreeBrowserLink();applyHandoffFocus();});
+else{addTreeBrowserLink();applyHandoffFocus();}
