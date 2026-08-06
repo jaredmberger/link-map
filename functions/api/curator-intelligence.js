@@ -1,4 +1,8 @@
 const SNAPSHOT_KEY = 'search-intelligence:link-map:v2';
+const BRIDGED_ADAPTERS = [
+  ['site-health', 'https://site-health.oceanliners.net/api/curator-intelligence'],
+  ['search-intelligence', 'https://search-intelligence.oceanliners.net/api/curator-intelligence'],
+];
 
 export async function onRequestGet(context) {
   try {
@@ -33,6 +37,8 @@ export async function onRequestGet(context) {
         },
       }));
 
+    const adapters = await loadBridgedAdapters();
+
     return json({
       ok: true,
       generatedAt: payload.generatedAt || new Date().toISOString(),
@@ -51,6 +57,7 @@ export async function onRequestGet(context) {
         edgeCount: Number(payload.edgeCount || 0),
         orphanCount: orphans.length,
         weakPageCount: weak.length,
+        bridgedAdapters: adapters.filter(item => item.ok).length,
       },
       pages: pages.map(page => ({
         path: page.path,
@@ -69,10 +76,36 @@ export async function onRequestGet(context) {
           meta: 'Link Map · live graph snapshot',
         },
       ],
+      adapters,
     });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
   }
+}
+
+async function loadBridgedAdapters() {
+  const results = await Promise.all(BRIDGED_ADAPTERS.map(async ([id, endpoint]) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(`${endpoint}?bridge=${Date.now()}`, {
+        headers: { accept: 'application/json', 'user-agent': 'CuratorOS-Link-Map-Bridge/1.0' },
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch {}
+      if (!response.ok || !payload?.ok || !payload?.system) {
+        return { id, ok: false, error: payload?.error || `HTTP ${response.status}` };
+      }
+      return { id, ok: true, payload };
+    } catch (error) {
+      return { id, ok: false, error: error?.name === 'AbortError' ? 'Bridge timed out' : (error?.message || String(error)) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  return results;
 }
 
 function json(value, status = 200) {
