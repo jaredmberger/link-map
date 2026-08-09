@@ -5,3 +5,7 @@ pages_build_output_dir = "./public"
 [[kv_namespaces]]
 binding = "LINK_MAP_CACHE"
 id = "9d3f33cd6d0940cfaf548649af119dfe"
+
+[[kv_namespaces]]
+binding = "CURATOR_ERROR_RECORDS"
+id = "447306da3a754b44830d2ac8608322c0"
