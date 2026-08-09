@@ -116,5 +116,15 @@ function applyHandoffFocus(){
   },500);
 }
 
+function loadCuratorErrorReporter(){
+  if(window.__CURATOR_CLIENT_ERROR_CAPTURE__||document.querySelector('script[data-curator-error-reporter]'))return;
+  const script=document.createElement('script');
+  script.src='https://errors.oceanliners.net/client-reporter.js?v=20260809-1';
+  script.async=true;
+  script.dataset.curatorErrorReporter='';
+  document.head.appendChild(script);
+}
+
+loadCuratorErrorReporter();
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{addTreeBrowserLink();applyHandoffFocus();});
 else{addTreeBrowserLink();applyHandoffFocus();}
