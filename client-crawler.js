@@ -125,6 +125,23 @@ function loadCuratorErrorReporter(){
   document.head.appendChild(script);
 }
 
+function applySignalFlagFix(){
+  if(document.querySelector('style[data-signal-flag-fix]'))return;
+  const style=document.createElement('style');
+  style.dataset.signalFlagFix='';
+  style.textContent=`
+    .signal-l{
+      display:block !important;
+      background:
+        linear-gradient(90deg,#ffd400 0 50%,#000 50% 100%) 0 0 / 100% 50% no-repeat,
+        linear-gradient(90deg,#000 0 50%,#ffd400 50% 100%) 0 100% / 100% 50% no-repeat !important;
+    }
+    .signal-l i{display:none !important;}
+  `;
+  document.head.appendChild(style);
+}
+
 loadCuratorErrorReporter();
+applySignalFlagFix();
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{addTreeBrowserLink();applyHandoffFocus();});
 else{addTreeBrowserLink();applyHandoffFocus();}
