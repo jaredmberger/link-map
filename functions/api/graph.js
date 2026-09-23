@@ -1,4 +1,5 @@
 const GRAPH_SNAPSHOT_KEY = 'link-map:graph:v1';
+const STALE_AFTER_MS = 72 * 60 * 60 * 1000;
 
 export async function onRequestGet(context) {
   try {
@@ -16,7 +17,17 @@ export async function onRequestGet(context) {
       }, 404);
     }
 
-    return json(payload);
+    const generatedAtMs = Date.parse(payload.generatedAt || '');
+    const ageMs = Number.isFinite(generatedAtMs) ? Math.max(0, Date.now() - generatedAtMs) : null;
+    const snapshotAgeHours = ageMs == null ? null : Math.round((ageMs / 36e5) * 10) / 10;
+    const stale = ageMs == null || ageMs > STALE_AFTER_MS;
+    return json({
+      ...payload,
+      stale,
+      snapshotAgeHours,
+      staleAfterHours: STALE_AFTER_MS / 36e5,
+      freshness: stale ? 'stale' : 'fresh'
+    });
   } catch (error) {
     return json({
       ok: false,
