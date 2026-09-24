@@ -25,7 +25,8 @@ export async function onRequestPost(context) {
     const snapshot = normalizeSnapshot(raw);
     if (!snapshot.pages.length) return json({ ok: false, error: 'Snapshot contains no pages.' }, 400);
 
-    const payload = buildIntegrationPayload(snapshot);
+    const sitemapPages = await discoverSitemapPages();
+    const payload = buildIntegrationPayload(snapshot, sitemapPages);
     await Promise.all([
       context.env.LINK_MAP_CACHE.put(SNAPSHOT_KEY, JSON.stringify(payload), {
         expirationTtl: 60 * 60 * 24 * 14,
@@ -51,6 +52,9 @@ export async function onRequestPost(context) {
       edges: payload.edgeCount,
       precomputed: true,
       graphPublished: true,
+      sitemapPages: sitemapPages.length,
+      inventoryPages: payload.pageCount,
+      orphanPages: payload.orphanCount,
     });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
@@ -75,24 +79,32 @@ function normalizeSnapshot(payload) {
   };
 }
 
-function buildIntegrationPayload(snapshot) {
-  const incoming = new Map(snapshot.pages.map(page => [page.url, new Set()]));
-  const outgoing = new Map(snapshot.pages.map(page => [page.url, new Set()]));
+function buildIntegrationPayload(snapshot, sitemapPages = []) {
+  const crawledByUrl = new Map(snapshot.pages.map(page => [page.url, page]));
+  const inventoryByUrl = new Map(snapshot.pages.map(page => [page.url, page]));
+  for (const url of sitemapPages) if (!inventoryByUrl.has(url)) inventoryByUrl.set(url, { url, title: '' });
+
+  const inventoryPages = [...inventoryByUrl.values()];
+  const incoming = new Map(inventoryPages.map(page => [page.url, new Set()]));
+  const outgoing = new Map(inventoryPages.map(page => [page.url, new Set()]));
   for (const edge of snapshot.edges) {
     outgoing.get(edge.source)?.add(edge.target);
     incoming.get(edge.target)?.add(edge.source);
   }
 
-  const pages = snapshot.pages.map(page => {
+  const pages = inventoryPages.map(page => {
     const inbound = incoming.get(page.url) || new Set();
     const outbound = outgoing.get(page.url) || new Set();
+    const reachable = crawledByUrl.has(page.url);
+    const orphan = page.url !== 'https://oceanliners.net/' && !reachable;
     return {
       path: toPath(page.url),
       title: page.title || '',
       inboundCount: inbound.size,
       outboundCount: outbound.size,
-      orphan: inbound.size === 0,
-      suggestions: suggestSourcesFast(page.url, snapshot.pages, incoming, outgoing),
+      reachable,
+      orphan,
+      suggestions: suggestSourcesFast(page.url, inventoryPages, incoming, outgoing),
     };
   });
 
@@ -101,9 +113,62 @@ function buildIntegrationPayload(snapshot) {
     source: 'CuratorOS Link Map',
     generatedAt: snapshot.generatedAt,
     pageCount: pages.length,
+    reachablePageCount: snapshot.pages.length,
+    sitemapPageCount: sitemapPages.length,
+    orphanCount: pages.filter(page => page.orphan).length,
     edgeCount: snapshot.edges.length,
     pages,
   };
+}
+
+async function discoverSitemapPages() {
+  const queue = ['https://oceanliners.net/sitemap.xml'];
+  const seenSitemaps = new Set();
+  const pages = new Set();
+
+  while (queue.length && seenSitemaps.size < 20) {
+    const sitemap = queue.shift();
+    if (!sitemap || seenSitemaps.has(sitemap)) continue;
+    seenSitemaps.add(sitemap);
+
+    let response;
+    try {
+      response = await fetch(sitemap, {
+        headers: {
+          accept: 'application/xml,text/xml,*/*',
+          'user-agent': 'CuratorOS-Link-Map/5.1 (+https://link-map.oceanliners.net)'
+        }
+      });
+    } catch {
+      continue;
+    }
+    if (!response.ok) continue;
+
+    const xml = await response.text();
+    for (const raw of [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)].map(match => decodeXml(match[1]))) {
+      const normalized = normalizeUrl(raw);
+      if (!normalized) continue;
+      let pathname = '';
+      try { pathname = new URL(normalized).pathname; } catch { continue; }
+      if (/\.xml$/i.test(pathname)) {
+        if (!seenSitemaps.has(normalized)) queue.push(normalized);
+        continue;
+      }
+      if (/\.(?:jpg|jpeg|png|webp|gif|svg|pdf|json|js|css|zip)$/i.test(pathname)) continue;
+      pages.add(normalized);
+    }
+  }
+
+  return [...pages].sort();
+}
+
+function decodeXml(value) {
+  return String(value || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 function suggestSourcesFast(target, pages, incoming, outgoing) {
