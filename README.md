@@ -59,3 +59,7 @@ A dedicated hostname keeps this tool isolated from CuratorOS deployment details.
 - per-page link inspector
 - potential connection suggestions based on shared graph neighbors
 - CSV link-audit export
+
+## Disaster recovery
+
+The complete `LINK_MAP_CACHE` namespace can be exported through authenticated `GET /api/recovery-export`. Configure the Pages secret `RECOVERY_EXPORT_TOKEN`; the route remains disabled if the secret is absent. The shared `CURATOR_ERROR_RECORDS` namespace is intentionally excluded because Error Bus owns its authoritative recovery path. See [`RECOVERY_EXPORT.md`](RECOVERY_EXPORT.md).
