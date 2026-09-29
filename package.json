@@ -4,7 +4,8 @@
   "private": true,
   "description": "Interactive internal-link graph for OceanLiners.net",
   "scripts": {
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "test": "node --test tests/runtime-contract.test.mjs"
   },
   "engines": {
     "node": ">=20"
